@@ -15,43 +15,43 @@ if [[ -z "${AWS_DEFAULT_REGION}" ]]; then
     echo "⚠️ AWS_DEFAULT_REGION is not defined, so aws cli might not work"
 fi
 
-if [[ $# -eq 0 ]] ; then
-    echo '❌ Argument for task is required'
+if [[ $# -le 1 ]] ; then
+    echo '❌ At least 2 argument are required: <cluster_name> <command>'
+    echo 'launch-task <cluster_name> <command>'
     exit 1
 fi
 
-ARG1="\"$*\""
+CLUSTER_NAME="${1}"
+CMD_ARGUMENT="\"${@:2}\""
 
-## Extract values from Terraform
+CONTAINER_NAME=$CLUSTER_NAME
+
+## Get network variables
 ## --------
 
-readonly TERRAFORM_OUTPUT=$(terraform output -json)
-#readonly TERRAFORM_OUTPUT=$(cat /tmp/terraform.out) ## REMOVE
+readonly ECS_CLUSTER_DATA="$(aws ecs describe-services --cluster ${CLUSTER_NAME} --services ${CLUSTER_NAME})" 
+readonly ECS_SUBNETS=$(echo $ECS_CLUSTER_DATA | jq -r '.services[].networkConfiguration.awsvpcConfiguration.subnets[]')
+readonly ECS_SECURITY_GROUPS=$(echo $ECS_CLUSTER_DATA | jq -r '.services[].networkConfiguration.awsvpcConfiguration.securityGroups[]')
 
-readonly CLUSTER_NAME=$(echo "$TERRAFORM_OUTPUT" |  jq -r -c ".name.value")
-readonly CONTAINER_NAME=$(echo "$TERRAFORM_OUTPUT" |  jq -r -c ".name.value")
-readonly SECURITY_GROUP_VPC=$(echo "$TERRAFORM_OUTPUT" |  jq -r -c ".vpc_default_security_group_id.value")
-readonly SECURITY_GROUP_ECS=$(echo "$TERRAFORM_OUTPUT" |  jq -r -c ".ecs_security_group_id.value")
-readonly SUBNETS=$(echo "$TERRAFORM_OUTPUT" |  jq -r -c ".vpc_private_subnets_ids.value[]")
+if [ -z "${ECS_SUBNETS}" ] || [ -z "${ECS_SECURITY_GROUPS}" ]; then
+    echo '❌ Could not extract automatically from ECS the subnets OR security groups from cluster, aborting.'
+    exit 1
+fi
 
 ## Construct request
 ## --------
 
 CMD="ecs run ${CLUSTER_NAME} ${CLUSTER_NAME} --launchtype FARGATE"
 
-for key in $SUBNETS; do
+for key in $ECS_SUBNETS; do
     CMD="$CMD --subnet $key"
 done
 
-for key in $SECURITY_GROUP_VPC; do
+for key in $ECS_SECURITY_GROUPS; do
     CMD="$CMD --securitygroup $key"
 done
 
-for key in $SECURITY_GROUP_ECS; do
-    CMD="$CMD --securitygroup $key"
-done
-
-CMD="$CMD -c ${CONTAINER_NAME} ${ARG1}"
+CMD="$CMD -c ${CONTAINER_NAME} ${CMD_ARGUMENT}"
 
 ## Create task
 ## --------
