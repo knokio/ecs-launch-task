@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+
+## Checks & Inputs
+## --------
+
+if [[ -z "${AWS_ACCESS_KEY_ID}" ]]; then
+    echo "⚠️ AWS_ACCESS_KEY_ID is not defined, so aws cli might not work"
+fi
+
+if [[ -z "${AWS_SECRET_ACCESS_KEY}" ]]; then
+    echo "⚠️ AWS_SECRET_ACCESS_KEY is not defined, so aws cli might not work"
+fi
+
+if [[ -z "${AWS_DEFAULT_REGION}" ]]; then
+    echo "⚠️ AWS_DEFAULT_REGION is not defined, so aws cli might not work"
+fi
+
+if [[ $# -eq 0 ]] ; then
+    echo '❌ Argument for task is required'
+    exit 1
+fi
+
+ARG1="\"$*\""
+
+## Extract values from Terraform
+## --------
+
+readonly TERRAFORM_OUTPUT=$(terraform output -json)
+#readonly TERRAFORM_OUTPUT=$(cat /tmp/terraform.out) ## REMOVE
+
+readonly CLUSTER_NAME=$(echo "$TERRAFORM_OUTPUT" |  jq -r -c ".name.value")
+readonly CONTAINER_NAME=$(echo "$TERRAFORM_OUTPUT" |  jq -r -c ".name.value")
+readonly SECURITY_GROUP_VPC=$(echo "$TERRAFORM_OUTPUT" |  jq -r -c ".vpc_default_security_group_id.value")
+readonly SECURITY_GROUP_ECS=$(echo "$TERRAFORM_OUTPUT" |  jq -r -c ".ecs_security_group_id.value")
+readonly SUBNETS=$(echo "$TERRAFORM_OUTPUT" |  jq -r -c ".vpc_private_subnets_ids.value[]")
+
+## Construct request
+## --------
+
+CMD="ecs run ${CLUSTER_NAME} ${CLUSTER_NAME} --launchtype FARGATE"
+
+for key in $SUBNETS; do
+    CMD="$CMD --subnet $key"
+done
+
+for key in $SECURITY_GROUP_VPC; do
+    CMD="$CMD --securitygroup $key"
+done
+
+for key in $SECURITY_GROUP_ECS; do
+    CMD="$CMD --securitygroup $key"
+done
+
+CMD="$CMD -c ${CONTAINER_NAME} ${ARG1}"
+
+## Create task
+## --------
+
+echo "Executing: ${CMD}"
+echo
+
+readonly CMD_CREATE_RESULT=$(eval $CMD)
+###readonly CMD_CREATE_RESULT="Successfully" ## REMOVE
+
+if [[ $CMD_CREATE_RESULT == *"Successfully"* ]]; then
+  readonly TASK_ARN=$(echo $CMD_CREATE_RESULT | sed -n 's/.*\(arn:aws:ecs:[^:]*:[^:]*:task\/[^/]*\/[a-z0-9]*\).*/\1/p')
+  ###readonly TASK_ARN="arn:aws:ecs:eu-west-1:722324792899:task/demo-release-rails/eedf6888f3774e218887c365dbad55a3" ## REMOVE
+  readonly TASK_ID=$(echo $CMD_CREATE_RESULT | sed -n 's/.*arn:aws:ecs:[^:]*:[^:]*:task\/[^/]*\/\([a-z0-9]*\).*/\1/p')
+
+  echo "✅ ECS Task created (${TASK_ARN})"
+  echo
+else
+  echo "❌ ECS create task: Could not create"
+  echo 
+  echo $CMD_CREATE_RESULT
+  exit
+fi
+
+echo 
+
+## Wait for task to RUNNING
+## --------
+
+echo "🕐 Waiting for task to start..."
+echo 
+echo "Task details: https://${AWS_DEFAULT_REGION}.console.aws.amazon.com/ecs/home?region=${AWS_DEFAULT_REGION}#/clusters/${CLUSTER_NAME}/tasks/${TASK_ID}/details"
+echo 
+
+readonly CMD_TASK_STATUS="aws ecs describe-tasks --cluster ${CLUSTER_NAME} --tasks ${TASK_ARN}"
+
+for index in {1..100}
+do
+    sleep 2
+    TASK_STATUS_RESULT=$(eval $CMD_TASK_STATUS | jq -r ".tasks[].lastStatus")
+
+    case "$TASK_STATUS_RESULT" in
+
+      "PROVISIONING" | "PENDING" | "ACTIVATING")
+        echo "🕐 Status: ${TASK_STATUS_RESULT}"
+        ;;
+      "RUNNING")
+        echo "✅ Task Running: showing last 10 lines of logs"
+        ecs-cli logs -c ${CLUSTER_NAME} --task-id ${TASK_ID} --since 1 | tail -n 20
+        ;;
+      "DEPROVISIONING" | "STOPPING")
+        echo "⚠️ Task ${TASK_STATUS_RESULT}: so works done"
+        ;;
+      "STOPPED")
+        echo "⚠️ Task ${TASK_STATUS_RESULT}"
+        break
+        ;;
+      *)
+        echo "Unknown status ${TASK_STATUS_RESULT}"
+        ;;
+    esac
+done 
+
+readonly TASK_FINISHED_STATUS=$(eval $CMD_TASK_STATUS)
+
+readonly TASK_EXIT_CODE=$(echo "$TASK_FINISHED_STATUS" | jq -r ".tasks[].containers[].exitCode")
+readonly TASK_EXIT_REASON=$(echo "$TASK_FINISHED_STATUS" | jq -r ".tasks[].containers[].reason")
+
+readonly TASK_URL_ENCODED=$(printf %s "rails/${CLUSTER_NAME}/${TASK_ID}" | jq -s -R -r @uri)
+
+echo
+
+if [ "$TASK_EXIT_CODE" -eq "0" ]; then
+  echo "✅✅✅ Task ${TASK_ID} finished with success (exit code: 0)"
+else
+  echo "⚠️ Task ${TASK_ID} finished, without exit code 0"
+  echo "- Exit code is <${TASK_EXIT_CODE}>"
+  echo "- Reason is '${TASK_EXIT_REASON}'"
+fi
+
+echo
+echo "Task details: https://${AWS_DEFAULT_REGION}.console.aws.amazon.com/ecs/home?region=${AWS_DEFAULT_REGION}#/clusters/${CLUSTER_NAME}/tasks/${TASK_ID}/details"
+echo
+echo "See full logs here: https://${AWS_DEFAULT_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_DEFAULT_REGION}#logsV2:log-groups/log-group/${CLUSTER_NAME}/log-events/${TASK_URL_ENCODED}"
+echo
+echo "or run:"
+echo "ecs-cli logs -c ${CLUSTER_NAME} --task-id ${TASK_ID}"
+echo
+
+
