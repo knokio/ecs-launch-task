@@ -60,14 +60,14 @@ echo "Executing: ${CMD}"
 echo
 
 readonly CMD_CREATE_RESULT=$(eval $CMD)
-###readonly CMD_CREATE_RESULT="Successfully" ## REMOVE
 
 if [[ $CMD_CREATE_RESULT == *"Successfully"* ]]; then
   readonly TASK_ARN=$(echo $CMD_CREATE_RESULT | sed -n 's/.*\(arn:aws:ecs:[^:]*:[^:]*:task\/[^/]*\/[a-z0-9]*\).*/\1/p')
-  ###readonly TASK_ARN="arn:aws:ecs:eu-west-1:722324792899:task/demo-release-rails/eedf6888f3774e218887c365dbad55a3" ## REMOVE
   readonly TASK_ID=$(echo $CMD_CREATE_RESULT | sed -n 's/.*arn:aws:ecs:[^:]*:[^:]*:task\/[^/]*\/\([a-z0-9]*\).*/\1/p')
 
-  echo "✅ ECS Task created (${TASK_ARN})"
+  echo "✅ ECS Task created"
+  echo "Task ARN: ${TASK_ARN}"
+  echo "Task ID: ${TASK_ID}"
   echo
 else
   echo "❌ ECS create task: Could not create"
@@ -85,6 +85,10 @@ echo "🕐 Waiting for task to start..."
 echo 
 echo "Task details: https://${AWS_DEFAULT_REGION}.console.aws.amazon.com/ecs/home?region=${AWS_DEFAULT_REGION}#/clusters/${CLUSTER_NAME}/tasks/${TASK_ID}/details"
 echo 
+echo "See full logs here: https://${AWS_DEFAULT_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_DEFAULT_REGION}#logsV2:log-groups/log-group/${CLUSTER_NAME}/log-events/${TASK_URL_ENCODED}"
+echo
+echo "or run:"
+echo "ecs-cli logs -c ${CLUSTER_NAME} --task-id ${TASK_ID}"
 
 readonly CMD_TASK_STATUS="aws ecs describe-tasks --cluster ${CLUSTER_NAME} --tasks ${TASK_ARN}"
 
@@ -124,14 +128,6 @@ readonly TASK_URL_ENCODED=$(printf %s "rails/${CLUSTER_NAME}/${TASK_ID}" | jq -s
 
 echo
 
-if [ "$TASK_EXIT_CODE" -eq "0" ]; then
-  echo "✅✅✅ Task ${TASK_ID} finished with success (exit code: 0)"
-else
-  echo "⚠️ Task ${TASK_ID} finished, without exit code 0"
-  echo "- Exit code is <${TASK_EXIT_CODE}>"
-  echo "- Reason is '${TASK_EXIT_REASON}'"
-fi
-
 echo
 echo "Task details: https://${AWS_DEFAULT_REGION}.console.aws.amazon.com/ecs/home?region=${AWS_DEFAULT_REGION}#/clusters/${CLUSTER_NAME}/tasks/${TASK_ID}/details"
 echo
@@ -141,4 +137,12 @@ echo "or run:"
 echo "ecs-cli logs -c ${CLUSTER_NAME} --task-id ${TASK_ID}"
 echo
 
+if [ "$TASK_EXIT_CODE" -eq "0" ]; then
+  echo "✅✅✅ Task ${TASK_ID} finished with success (exit code: 0)"
+else
+  echo "⚠️ Task ${TASK_ID} finished, without exit code 0"
+  echo "- Exit code is <${TASK_EXIT_CODE}>"
+  echo "- Reason is '${TASK_EXIT_REASON}'"
+fi
 
+exit $TASK_EXIT_CODE
