@@ -78,8 +78,15 @@ readonly CMD_CREATE_RESULT=$(eval $CMD)
 echo $CMD_CREATE_RESULT
 
 if [[ $CMD_CREATE_RESULT == *"Successfully"* ]]; then
-  readonly TASK_ARN=$(echo $CMD_CREATE_RESULT | sed -n 's/.*\(arn:aws:ecs:[^:]*:[^:]*:task\/[^/]*\/[a-z0-9]*\).*/\1/p')
-  readonly TASK_ID=$(echo $CMD_CREATE_RESULT | sed -n 's/.*arn:aws:ecs:[^:]*:[^:]*:task\/[^/]*\/\([a-z0-9]*\).*/\1/p')
+  # Format: arn:aws:ecs:eu-west-1:99999999999:task/xxxxxxxxxxxx/zyzyzyzyz
+  TASK_ARN=$(echo $CMD_CREATE_RESULT | sed -n 's/.*\(arn:aws:ecs:[^:]*:[^:]*:task\/[^/]*\/[a-z0-9]*\).*/\1/p')
+  TASK_ID=$(echo $CMD_CREATE_RESULT | sed -n 's/.*arn:aws:ecs:[^:]*:[^:]*:task\/[^/]*\/\([a-z0-9]*\).*/\1/p')
+
+  # Format: arn:aws:ecs:eu-west-1:99999999999:task/zyz-yzy-zyz
+  if [[ -z "${TASK_ARN}" ]]; then
+    TASK_ARN=$(echo $CMD_CREATE_RESULT | sed -n 's/.*\(arn:aws:ecs:[^:]*:[^:]*:task\/[a-z0-9-]*\).*/\1/p')
+    TASK_ID=$(echo $CMD_CREATE_RESULT | sed -n 's/.*arn:aws:ecs:[^:]*:[^:]*:task\/\([a-z0-9-]*\).*/\1/p')
+  fi  
 
   echo "✅ ECS Task created"
   echo "Task ARN: ${TASK_ARN}"
